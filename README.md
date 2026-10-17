@@ -34,7 +34,7 @@ sudo apt install cmake build-essential python3-venv
 cd web && npm install
 ```
 
-`BACKEND=cpu ./setup.sh` forces a CPU build; `JOBS=2 ./setup.sh` limits parallel compile jobs (CUDA builds need ~1–2 GB RAM per job).
+`BACKEND=cpu ./setup.sh` forces a CPU build; `JOBS=2 ./setup.sh` limits parallel compile jobs (CUDA builds need ~1–2 GB RAM per job). Ubuntu 22.04's apt CUDA (11.5) can't compile with its default g++ 11: `sudo apt install g++-10` and `setup.sh` uses it automatically.
 
 `setup.sh` produces `llama-quantize`, `llama-imatrix` and `llama-completion` in `vendor/llama.cpp/build/bin/`, and a `.venv` with the Python deps. ~10 minutes the first time. llama.cpp is pinned to the commit in `LLAMA_COMMIT` (`setup.sh`), because upstream changes CLI flags on master; bump it deliberately after re-testing.
 

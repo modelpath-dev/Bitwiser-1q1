@@ -33,8 +33,6 @@ case "$(uname -s)" in
     ;;
 esac
 
-# Backend flags are always passed explicitly so a re-run with a different
-# BACKEND overrides what CMake cached from the previous configure.
 case "$BACKEND" in
   metal) BACKEND_FLAGS=(-DGGML_METAL=ON) ;;
   cuda)
@@ -58,7 +56,7 @@ case "$BACKEND" in
       fi
     fi
     ;;
-  cpu) BACKEND_FLAGS=(-DGGML_CUDA=OFF) ;;
+  cpu) BACKEND_FLAGS=() ;;
   *)
     echo "Unknown BACKEND=$BACKEND (expected metal, cuda or cpu)"
     exit 1
@@ -80,11 +78,22 @@ echo "==> Checking out llama.cpp @ ${LLAMA_COMMIT:0:7}"
 git -C "$LLAMA" fetch --quiet origin "$LLAMA_COMMIT"
 git -C "$LLAMA" checkout --quiet "$LLAMA_COMMIT"
 
+# CMake keeps the backend and CUDA host compiler from the first configure and
+# ignores later changes, so start from a clean build dir whenever they differ.
+BUILD="$LLAMA/build"
+STAMP="$BUILD/.bitwiser-config"
+CONFIG="$LLAMA_COMMIT ${BACKEND_FLAGS[*]:-}"
+if [ -d "$BUILD" ] && [ "$(cat "$STAMP" 2>/dev/null)" != "$CONFIG" ]; then
+  echo "==> Build config changed; removing old build dir"
+  rm -rf "$BUILD"
+fi
+
 echo "==> Configuring for $BACKEND"
-cmake -S "$LLAMA" -B "$LLAMA/build" "${BACKEND_FLAGS[@]}" -DLLAMA_CURL=OFF
+cmake -S "$LLAMA" -B "$BUILD" ${BACKEND_FLAGS[@]+"${BACKEND_FLAGS[@]}"} -DLLAMA_CURL=OFF
+echo "$CONFIG" > "$STAMP"
 
 echo "==> Building (Release, $JOBS jobs)"
-cmake --build "$LLAMA/build" --config Release -j "$JOBS" \
+cmake --build "$BUILD" --config Release -j "$JOBS" \
   --target llama-quantize llama-imatrix llama-completion
 
 echo "==> Installing Python deps into .venv"
@@ -94,4 +103,4 @@ python3 -m venv "$ROOT/.venv"
 
 echo
 echo "Done ($BACKEND). Binaries:"
-ls "$LLAMA/build/bin" | grep -E '^(llama-quantize|llama-imatrix|llama-completion)$' || true
+ls "$BUILD/bin" | grep -E '^(llama-quantize|llama-imatrix|llama-completion)$' || true
