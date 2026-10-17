@@ -1,6 +1,6 @@
 # BitWiser
 
-One-click 1-bit (IQ1_S) compressor for any local LLM on Apple Silicon. FastAPI backend, React frontend, llama.cpp + Metal under the hood.
+One-click 1-bit (IQ1_S) compressor for any local LLM on Apple Silicon or Linux. FastAPI backend, React frontend, llama.cpp under the hood (Metal on macOS, CUDA or CPU on Linux).
 
 ## Screenshots
 
@@ -8,7 +8,7 @@ One-click 1-bit (IQ1_S) compressor for any local LLM on Apple Silicon. FastAPI b
 
 ![Model picker](images/img1.png)
 
-**Shrink to IQ1_S** - importance-matrix calibration, Metal-tuned quantize, live RAM / bandwidth / file-size readout.
+**Shrink to IQ1_S** - importance-matrix calibration, GPU-accelerated quantize, live RAM / bandwidth / file-size readout.
 
 ![Compression](images/img2.png)
 
@@ -18,11 +18,23 @@ One-click 1-bit (IQ1_S) compressor for any local LLM on Apple Silicon. FastAPI b
 
 ## Install
 
+macOS (Apple Silicon):
+
 ```bash
 brew install cmake
 ./setup.sh                                  # builds llama.cpp with Metal + Python deps in .venv
 cd web && npm install                       # frontend deps
 ```
+
+Linux:
+
+```bash
+sudo apt install cmake build-essential python3-venv
+./setup.sh                                  # CUDA if nvcc is on PATH, otherwise CPU
+cd web && npm install
+```
+
+`BACKEND=cpu ./setup.sh` forces a CPU build; `JOBS=2 ./setup.sh` limits parallel compile jobs (CUDA builds need ~1–2 GB RAM per job).
 
 `setup.sh` produces `llama-quantize`, `llama-imatrix` and `llama-completion` in `vendor/llama.cpp/build/bin/`, and a `.venv` with the Python deps. ~10 minutes the first time. llama.cpp is pinned to the commit in `LLAMA_COMMIT` (`setup.sh`), because upstream changes CLI flags on master; bump it deliberately after re-testing.
 
@@ -96,7 +108,7 @@ cd web && npm run build                     # emits web/dist/
 on-disk / Ollama models
         │  (auto-discover)
         ▼
-  imatrix calibration  ──►  IQ1_S quantize (Metal)  ──►  GGUF (~7× smaller)
+  imatrix calibration  ──►  IQ1_S quantize (GPU)  ──►  GGUF (~7× smaller)
         │                                                     │
         └──────────────► FastAPI ◄────────────────────────────┘
                             │
@@ -108,10 +120,10 @@ on-disk / Ollama models
 
 | File | Responsibility |
 | --- | --- |
-| `scanner.py` | Walks Ollama manifests + local `.gguf`, peeks GGUF headers for arch/quant. |
+| `scanner.py` | Walks Ollama manifests (`$OLLAMA_MODELS`, `~/.ollama/models`, `/usr/share/ollama/.ollama/models`) + local `.gguf`, peeks GGUF headers for arch/quant. |
 | `compressor.py` | Wraps `llama-imatrix` + `llama-quantize`, streams progress, caches output to `compressed/`. |
 | `prompts.py` | Per-family chat templates (Gemma / Llama / Mistral / Phi / Qwen). |
-| `inference.py` | Spawns `llama-completion` with optimal threads and `-ngl 99`; reports llama.cpp's own decode tokens/sec. |
+| `inference.py` | Spawns `llama-completion` with optimal threads and GPU offload; reports llama.cpp's own decode tokens/sec and the active backend. |
 | `monitor.py` | psutil RSS/CPU sampler + optional `powermetrics` wattage. |
 | `server.py` | FastAPI: `/api/models`, `/api/compress` (SSE), `/api/inference` (SSE). |
 | `web/` | Vite + React + Tailwind v4 frontend. |
@@ -122,7 +134,8 @@ on-disk / Ollama models
 - **Tokens/sec** - the playground shows llama.cpp's decode rate (generated tokens / eval time), so model load and prompt processing are excluded. Runs killed by the timeout or runaway guard show `—`.
 - **Interrupted compression** - output is written to `*.part` and renamed only on success; closing the tab stops the running `llama-imatrix` / `llama-quantize`.
 - **Wattage** - `powermetrics` requires sudo. Configure passwordless sudo (`sudo visudo`) for live energy numbers; otherwise the dashboard estimates from bandwidth.
-- **Threads** - runner picks `physical_cores - 2` and offloads all layers to Metal with `-ngl 99`.
+- **Threads** - runner picks `physical_cores - 2`.
+- **GPU offload** - on macOS all layers go to Metal (`-ngl 99`; unified memory). On Linux, llama.cpp's `-ngl auto` puts as many layers as fit in VRAM on the GPU and runs the rest on CPU, so models bigger than a small card's VRAM still load.
 
 ## References
 

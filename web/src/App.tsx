@@ -69,10 +69,10 @@ export default function App() {
       </main>
 
       <footer className="mt-16 flex items-center justify-between border-t border-white/5 pt-6 text-xs text-[--color-ink-400]">
-        <span>BitWiser · Apple Silicon · llama.cpp + Metal</span>
+        <span>BitWiser · llama.cpp{system ? ` · ${system.backend}` : ""}</span>
         {system && (
           <span className="font-mono">
-            {system.physical_cores} cores · {system.optimal_threads} threads · -ngl 99
+            {system.physical_cores} cores · {system.optimal_threads} threads · -ngl {system.gpu_layers}
           </span>
         )}
       </footer>
@@ -102,12 +102,12 @@ function Header({ system }: { system: SystemInfo | null }) {
         </h1>
         <p className="mt-3 max-w-xl text-sm leading-relaxed text-[--color-ink-300]">
           Pick an Ollama or GGUF model, click Shrink, and run the original and the
-          1-bit version side-by-side. Metal-accelerated, no cloud.
+          1-bit version side-by-side. GPU-accelerated where available, no cloud.
         </p>
       </div>
       {system && (
         <div className="flex shrink-0 gap-2">
-          <span className="pill pill-accent">Metal · -ngl 99</span>
+          <span className="pill pill-accent">{system.backend} · -ngl {system.gpu_layers}</span>
           <span className="pill">{system.optimal_threads} threads</span>
           <span className="pill">IQ1_S</span>
         </div>

@@ -1,9 +1,11 @@
-"""Resource-aware Metal-accelerated inference via llama-cli."""
+"""Resource-aware GPU-accelerated inference via llama-completion."""
 from __future__ import annotations
 
+import functools
 import os
 import re
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -31,6 +33,36 @@ EOF_MARKER = "> EOF by user"
 #   llama_perf_context_print:        eval time =  812.30 ms /   127 runs   ( ... )
 # "runs" (not "tokens") distinguishes it from the "prompt eval time" line.
 EVAL_PERF_RE = re.compile(r" eval time =\s*([\d.]+) ms /\s*(\d+) runs")
+
+# Metal shares system RAM, so every layer fits on the GPU. A discrete GPU has
+# its own (often small) VRAM: forcing all layers there fails to load anything
+# bigger than VRAM, so elsewhere we leave llama.cpp's default `-ngl auto` with
+# `--fit on`, which offloads as many layers as fit.
+GPU_LAYERS = "99" if sys.platform == "darwin" else "auto"
+GPU_LAYER_ARGS = ["-ngl", GPU_LAYERS]
+
+# `--list-devices` prints e.g. "  CUDA0: NVIDIA GeForce GTX 1650 (4096 MiB, ...)".
+_DEVICE_RE = re.compile(r"^\s*([A-Za-z]+)\d+:\s*(.+?)\s*\(")
+_BACKEND_NAMES = {"MTL": "Metal", "CUDA": "CUDA", "Vulkan": "Vulkan"}
+
+
+@functools.cache
+def compute_backend() -> str:
+    """Accelerator llama.cpp was built for, as shown in the UI: "CUDA · <gpu>",
+    "Metal · <chip>", or "CPU" when no GPU device is available."""
+    if not CLI_BIN.exists():
+        return "llama.cpp not built"
+    try:
+        res = subprocess.run(
+            [str(CLI_BIN), "--list-devices"], capture_output=True, text=True, timeout=30
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return "unknown"
+    for line in (res.stdout + res.stderr).splitlines():
+        m = _DEVICE_RE.match(line)
+        if m:
+            return f"{_BACKEND_NAMES.get(m.group(1), m.group(1))} · {m.group(2)}"
+    return "CPU"
 
 
 @dataclass
@@ -86,7 +118,7 @@ def build_command(
         "-n", str(n_predict),
         "-c", str(ctx),
         "-t", str(threads or optimal_thread_count()),
-        "-ngl", "99",         # offload all layers to Metal GPU
+        *GPU_LAYER_ARGS,
         "--no-display-prompt",
         "--simple-io",
     ]

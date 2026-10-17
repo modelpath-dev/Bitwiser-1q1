@@ -7,7 +7,6 @@ import struct
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-OLLAMA_ROOT = Path.home() / ".ollama" / "models"
 OLLAMA_MEDIA_MODEL = "application/vnd.ollama.image.model"
 
 GGUF_MAGIC = b"GGUF"
@@ -136,10 +135,32 @@ def _build_model(name: str, source: str, path: Path) -> Model:
     )
 
 
+def _ollama_roots() -> list[Path]:
+    """Ollama model stores: $OLLAMA_MODELS if set, the per-user store (macOS,
+    `ollama serve`), and the system store used by the Linux installer's service."""
+    roots = [Path.home() / ".ollama" / "models", Path("/usr/share/ollama/.ollama/models")]
+    if os.environ.get("OLLAMA_MODELS"):
+        roots.insert(0, Path(os.environ["OLLAMA_MODELS"]))
+    return roots
+
+
 def scan_ollama() -> list[Model]:
     out: list[Model] = []
-    manifests_root = OLLAMA_ROOT / "manifests"
-    blobs_root = OLLAMA_ROOT / "blobs"
+    seen: set[Path] = set()
+    for root in _ollama_roots():
+        # $OLLAMA_MODELS often points at one of the default stores.
+        real = root.resolve()
+        if real in seen:
+            continue
+        seen.add(real)
+        out.extend(_scan_ollama_root(root))
+    return out
+
+
+def _scan_ollama_root(root: Path) -> list[Model]:
+    out: list[Model] = []
+    manifests_root = root / "manifests"
+    blobs_root = root / "blobs"
     if not manifests_root.exists() or not blobs_root.exists():
         return out
 

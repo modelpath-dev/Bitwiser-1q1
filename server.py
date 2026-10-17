@@ -45,6 +45,8 @@ def list_models() -> dict:
         "system": {
             "physical_cores": inference._physical_cores(),
             "optimal_threads": inference.optimal_thread_count(),
+            "backend": inference.compute_backend(),
+            "gpu_layers": inference.GPU_LAYERS,
         },
     }
 

@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable
 
+from inference import GPU_LAYER_ARGS
 from scanner import Model, _read_gguf_metadata
 
 ROOT = Path(__file__).resolve().parent
@@ -126,7 +127,7 @@ def _generate_imatrix(
         "-o", str(part),
         "-c", "512",
         "--chunks", str(chunks),
-        "-ngl", "99",
+        *GPU_LAYER_ARGS,
     ]
 
     proc = subprocess.Popen(

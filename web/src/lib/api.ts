@@ -12,6 +12,8 @@ export type Model = {
 export type SystemInfo = {
   physical_cores: number;
   optimal_threads: number;
+  backend: string; // e.g. "CUDA · NVIDIA GeForce GTX 1650", "Metal · Apple M3 Max", "CPU"
+  gpu_layers: string; // value passed to -ngl: "99" on macOS, "auto" elsewhere
 };
 
 export type CompressPhase = "calibrate" | "quantize";

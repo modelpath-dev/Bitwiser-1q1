@@ -103,8 +103,7 @@ export function ShrinkPanel({ model, onCompressed }: Props) {
             </span>
           </h2>
           <p className="mt-1 max-w-xl text-sm text-[--color-ink-300]">
-            Importance Quantization — ~1.56 bits per weight, Metal-tuned for Apple
-            Silicon. Output lands in{" "}
+            Importance Quantization — ~1.56 bits per weight. Output lands in{" "}
             <code className="font-mono text-[--color-ink-100]">compressed/</code>.
           </p>
         </div>

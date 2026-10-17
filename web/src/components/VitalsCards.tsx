@@ -20,7 +20,7 @@ export function VitalsCards({ artifact }: Props) {
     {
       label: "Bandwidth speedup",
       value: speedup,
-      sub: "memory-bound inference on M-series",
+      sub: "decode is memory-bandwidth bound",
       tone: "cyan" as const,
     },
     {
