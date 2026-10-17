@@ -63,6 +63,7 @@ def _stream_compress(model: scanner.Model, target: str):
     """Run llama-quantize in a thread, push events into a queue, drain to SSE."""
     q: queue.Queue = queue.Queue()
     DONE = object()
+    proc_sink: list = []  # populated by compressor.compress as each subprocess starts
 
     def worker() -> None:
         def cb(pct: float, line: str, phase: str = "quantize") -> None:
@@ -72,7 +73,7 @@ def _stream_compress(model: scanner.Model, target: str):
                 q.put({"type": "progress", "pct": pct, "line": line, "phase": phase})
 
         try:
-            res = compressor.compress(model, target=target, on_progress=cb)
+            res = compressor.compress(model, target=target, on_progress=cb, proc_sink=proc_sink)
         except compressor.CompressionError as e:
             q.put({"type": "error", "message": str(e)})
         except Exception as e:  # noqa: BLE001
@@ -95,11 +96,17 @@ def _stream_compress(model: scanner.Model, target: str):
 
     async def gen():
         loop = asyncio.get_running_loop()
-        while True:
-            evt = await loop.run_in_executor(None, q.get)
-            if evt is DONE:
-                return
-            yield _sse(evt)
+        try:
+            while True:
+                evt = await loop.run_in_executor(None, q.get)
+                if evt is DONE:
+                    return
+                yield _sse(evt)
+        finally:
+            # Client disconnected — stop llama-imatrix / llama-quantize rather
+            # than letting a multi-minute job run on with nobody watching.
+            for proc in proc_sink:
+                inference._kill_proc(proc)
 
     return gen
 
@@ -147,7 +154,7 @@ def _stream_inference(req: InferenceRequest):
                             "peak_rss_bytes": stats.peak_rss_bytes,
                         }
                     )
-                elif chunk.startswith("[warning]") or chunk.startswith("[timeout]") or chunk.startswith("[runaway]"):
+                elif chunk.lstrip().startswith(("[warning]", "[timeout]", "[runaway]")):
                     q.put({"type": "warning", "message": chunk.strip()})
                 else:
                     q.put({"type": "token", "text": chunk})

@@ -7,7 +7,7 @@ type RunState = {
   warning: string | null;
   error: string | null;
   running: boolean;
-  stats: { tokens: number; elapsed_s: number; tokens_per_s: number } | null;
+  stats: { tokens: number | null; elapsed_s: number; tokens_per_s: number | null } | null;
 };
 
 const INITIAL: RunState = {

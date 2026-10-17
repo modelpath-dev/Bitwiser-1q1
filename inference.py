@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,16 +27,25 @@ CLI_BIN = LLAMA_BIN / "llama-completion"
 # buffer it out of the user-visible stream.
 EOF_MARKER = "> EOF by user"
 
+# llama.cpp's perf summary on stderr, e.g.
+#   llama_perf_context_print:        eval time =  812.30 ms /   127 runs   ( ... )
+# "runs" (not "tokens") distinguishes it from the "prompt eval time" line.
+EVAL_PERF_RE = re.compile(r" eval time =\s*([\d.]+) ms /\s*(\d+) runs")
+
 
 @dataclass
 class RunStats:
-    tokens: int
+    tokens: int | None  # generated tokens per llama.cpp; None if it never printed perf
     elapsed_s: float
     peak_rss_bytes: int
+    eval_ms: float | None = None
 
     @property
-    def tokens_per_s(self) -> float:
-        return self.tokens / self.elapsed_s if self.elapsed_s > 0 else 0.0
+    def tokens_per_s(self) -> float | None:
+        """Decode speed as llama.cpp measures it (excludes model load and prompt eval)."""
+        if not self.tokens or not self.eval_ms:
+            return None
+        return self.tokens / (self.eval_ms / 1000.0)
 
 
 def _physical_cores() -> int:
@@ -65,7 +75,6 @@ def build_command(
     threads: int | None = None,
     n_predict: int = 256,
     ctx: int = 4096,
-    use_mmap: bool = True,
     stop_tokens: list[str] | None = None,
 ) -> list[str]:
     if not CLI_BIN.exists():
@@ -81,8 +90,6 @@ def build_command(
         "--no-display-prompt",
         "--simple-io",
     ]
-    if not use_mmap:
-        cmd.append("--no-mmap")
     if stop_tokens:
         for s in stop_tokens:
             cmd.extend(["-r", s])
@@ -128,11 +135,12 @@ def run_streaming(
       - runaway-whitespace guard (kills if >`runaway_blank_chars` in a row)
       - generator-level cleanup: `finally` block always reaps the subprocess."""
     fits, size, avail = model_will_fit(model_path)
-    use_mmap = True
     if not fits:
+        # Weights are always mmap'd (llama.cpp's default), so an oversized
+        # model still runs; the kernel pages it from disk.
         yield (
             f"[warning] model is {size/1e9:.1f} GB but only {avail/1e9:.1f} GB RAM is "
-            f"free; falling back to mmap (will be slow).\n",
+            f"free; weights will page from disk (will be slow).\n",
             None,
         )
 
@@ -142,7 +150,6 @@ def run_streaming(
         formatted,
         n_predict=n_predict,
         ctx=ctx,
-        use_mmap=use_mmap,
         stop_tokens=stop,
     )
 
@@ -150,16 +157,41 @@ def run_streaming(
     proc = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
         text=True,
         bufsize=1,
     )
     if proc_sink is not None:
         proc_sink.append(proc)
-    assert proc.stdout is not None
+    assert proc.stdout is not None and proc.stderr is not None
+
+    # stderr must be drained continuously or llama.cpp blocks on a full pipe.
+    # We only keep the perf summary line it prints on exit.
+    eval_perf: list[tuple[float, int]] = []
+
+    def _drain_stderr() -> None:
+        for line in proc.stderr:
+            m = EVAL_PERF_RE.search(line)
+            if m:
+                eval_perf.append((float(m.group(1)), int(m.group(2))))
+
+    stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
+    stderr_thread.start()
+
+    # stdout.read(1) blocks while the model loads or stalls, so the wall-clock
+    # limit is enforced from a timer; killing the process unblocks the read.
+    timed_out = threading.Event()
+
+    def _on_timeout() -> None:
+        timed_out.set()
+        _kill_proc(proc)
+
+    timer = threading.Timer(timeout_s, _on_timeout)
+    timer.daemon = True
+    timer.start()
 
     peak_rss = 0
-    tokens = 0
+    chars = 0
     consecutive_blank = 0
     try:
         ps = psutil.Process(proc.pid)
@@ -178,18 +210,13 @@ def run_streaming(
 
     try:
         while True:
-            if time.perf_counter() - start > timeout_s:
-                _kill_proc(proc)
-                yield (f"\n[timeout] killed after {timeout_s:.0f}s\n", None)
-                break
-
             ch = proc.stdout.read(1)
             if not ch:
                 break
+            chars += 1
 
             if ch.strip():
                 consecutive_blank = 0
-                tokens += 1
             else:
                 consecutive_blank += 1
                 if consecutive_blank >= runaway_blank_chars:
@@ -206,7 +233,7 @@ def run_streaming(
             if old is not None:
                 yield (old, None)
 
-            if ps is not None and tokens % 16 == 0:
+            if ps is not None and chars % 16 == 0:
                 try:
                     rss = ps.memory_info().rss
                     if rss > peak_rss:
@@ -224,13 +251,18 @@ def run_streaming(
         else:
             if trailing:
                 yield (trailing, None)
+        if timed_out.is_set():
+            yield (f"\n[timeout] killed after {timeout_s:.0f}s\n", None)
     finally:
+        timer.cancel()
         # If the consumer abandoned us (SSE client disconnected, etc.) this
         # finally runs and reaps the subprocess so the model unloads from RAM.
         _kill_proc(proc)
 
     elapsed = time.perf_counter() - start
-    yield ("", RunStats(tokens=tokens, elapsed_s=elapsed, peak_rss_bytes=peak_rss))
+    stderr_thread.join(timeout=2.0)
+    eval_ms, tokens = eval_perf[-1] if eval_perf else (None, None)
+    yield ("", RunStats(tokens=tokens, elapsed_s=elapsed, peak_rss_bytes=peak_rss, eval_ms=eval_ms))
 
 
 def run_blocking(

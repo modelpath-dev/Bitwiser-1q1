@@ -34,9 +34,10 @@ export type InferenceEvent =
   | { type: "warning"; message: string }
   | {
       type: "done";
-      tokens: number;
+      // null when llama.cpp exited without printing its perf summary (killed early)
+      tokens: number | null;
       elapsed_s: number;
-      tokens_per_s: number;
+      tokens_per_s: number | null;
       peak_rss_bytes: number;
     }
   | { type: "error"; message: string };

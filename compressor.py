@@ -88,10 +88,24 @@ def _emit(cb: ProgressCB | None, pct: float, line: str, phase: str) -> None:
         cb(pct, line)
 
 
+def _part_path(out: Path) -> Path:
+    """Where a subprocess writes before the result is complete. Only a finished,
+    successful run is renamed to `out`, so an existing `out` is always trustworthy
+    as a cache hit."""
+    return out.with_name(out.name + ".part")
+
+
+def _reap(proc: subprocess.Popen) -> None:
+    if proc.poll() is None:
+        proc.kill()
+        proc.wait()
+
+
 def _generate_imatrix(
     model: Model,
     on_progress: ProgressCB | None,
     chunks: int = 12,
+    proc_sink: list | None = None,
 ) -> Path:
     """Run llama-imatrix over calibration.txt to produce an importance matrix.
     Cached: if the imatrix file already exists, returns it without recomputing."""
@@ -104,15 +118,15 @@ def _generate_imatrix(
     if not CALIBRATION_FILE.exists():
         raise CompressionError(f"calibration.txt missing at {CALIBRATION_FILE}")
 
+    part = _part_path(out)
     cmd = [
         str(binary),
         "-m", model.path,
         "-f", str(CALIBRATION_FILE),
-        "-o", str(out),
+        "-o", str(part),
         "-c", "512",
         "--chunks", str(chunks),
         "-ngl", "99",
-        "--no-mmap",
     ]
 
     proc = subprocess.Popen(
@@ -122,6 +136,8 @@ def _generate_imatrix(
         text=True,
         bufsize=1,
     )
+    if proc_sink is not None:
+        proc_sink.append(proc)
 
     total = chunks
     chunk_re = re.compile(r"\[(\d+)\]")
@@ -129,22 +145,27 @@ def _generate_imatrix(
 
     assert proc.stdout is not None
     last_pct = 0.0
-    for line in proc.stdout:
-        line = line.rstrip()
-        m = total_re.search(line)
-        if m:
-            total = max(int(m.group(1)), 1)
-        m = chunk_re.search(line)
-        if m:
-            n = int(m.group(1))
-            last_pct = min(n / total, 1.0)
-        _emit(on_progress, last_pct, line, "calibrate")
+    try:
+        for line in proc.stdout:
+            line = line.rstrip()
+            m = total_re.search(line)
+            if m:
+                total = max(int(m.group(1)), 1)
+            m = chunk_re.search(line)
+            if m:
+                n = int(m.group(1))
+                last_pct = min(n / total, 1.0)
+            _emit(on_progress, last_pct, line, "calibrate")
 
-    rc = proc.wait()
-    if rc != 0:
-        raise CompressionError(f"llama-imatrix exited with status {rc}")
-    if not out.exists():
-        raise CompressionError("imatrix finished but output file is missing")
+        rc = proc.wait()
+        if rc != 0:
+            raise CompressionError(f"llama-imatrix exited with status {rc}")
+        if not part.exists():
+            raise CompressionError("imatrix finished but output file is missing")
+        os.replace(part, out)
+    finally:
+        _reap(proc)
+        part.unlink(missing_ok=True)
     return out
 
 
@@ -153,10 +174,12 @@ def compress(
     target: str = "IQ1_S",
     on_progress: ProgressCB | None = None,
     overwrite: bool = False,
+    proc_sink: list | None = None,
 ) -> CompressionResult:
     """Run llama-quantize on `model`, streaming progress.
     `on_progress(pct, line, phase)` is invoked for every output line, where
-    `phase` is "calibrate" (during imatrix) or "quantize"."""
+    `phase` is "calibrate" (during imatrix) or "quantize". Each subprocess is
+    appended to `proc_sink` (if provided) so the caller can kill it on cancel."""
     binary = _ensure_binary(QUANTIZE_BIN, "llama-quantize")
     out = output_path_for(model, target)
 
@@ -218,11 +241,12 @@ def compress(
 
     if target_upper in NEEDS_IMATRIX:
         _emit(on_progress, 0.0, f"[imatrix] {target} requires calibration; starting", "calibrate")
-        imatrix = _generate_imatrix(model, on_progress)
+        imatrix = _generate_imatrix(model, on_progress, proc_sink=proc_sink)
         extra_args.extend(["--imatrix", str(imatrix)])
         _emit(on_progress, 0.0, f"[quantize] starting {target}", "quantize")
 
-    cmd = [str(binary), *extra_args, model.path, str(out), target]
+    part = _part_path(out)
+    cmd = [str(binary), *extra_args, model.path, str(part), target]
 
     proc = subprocess.Popen(
         cmd,
@@ -231,26 +255,32 @@ def compress(
         text=True,
         bufsize=1,
     )
+    if proc_sink is not None:
+        proc_sink.append(proc)
 
     # llama-quantize prints "[ N/M] ..." lines per tensor; use those for progress.
     progress_re = re.compile(r"\[\s*(\d+)\s*/\s*(\d+)\s*\]")
     last_pct = 0.0
     assert proc.stdout is not None
-    for line in proc.stdout:
-        line = line.rstrip()
-        m = progress_re.search(line)
-        if m:
-            n, total = int(m.group(1)), int(m.group(2))
-            if total > 0:
-                last_pct = n / total
-        _emit(on_progress, last_pct, line, "quantize")
+    try:
+        for line in proc.stdout:
+            line = line.rstrip()
+            m = progress_re.search(line)
+            if m:
+                n, total = int(m.group(1)), int(m.group(2))
+                if total > 0:
+                    last_pct = n / total
+            _emit(on_progress, last_pct, line, "quantize")
 
-    rc = proc.wait()
-    if rc != 0:
-        raise CompressionError(f"llama-quantize exited with status {rc}")
-
-    if not out.exists():
-        raise CompressionError("Quantization finished but output file is missing.")
+        rc = proc.wait()
+        if rc != 0:
+            raise CompressionError(f"llama-quantize exited with status {rc}")
+        if not part.exists():
+            raise CompressionError("Quantization finished but output file is missing.")
+        os.replace(part, out)
+    finally:
+        _reap(proc)
+        part.unlink(missing_ok=True)
 
     in_size = Path(model.path).stat().st_size
     out_size = out.stat().st_size

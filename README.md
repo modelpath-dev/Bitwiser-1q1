@@ -4,7 +4,7 @@ One-click 1-bit (IQ1_S) compressor for any local LLM on Apple Silicon. FastAPI b
 
 ## Screenshots
 
-**Pick a model** - auto-discovered from Ollama and `~/.models`.
+**Pick a model** - auto-discovered from Ollama, `~/Downloads` and `~/Models`.
 
 ![Model picker](images/img1.png)
 
@@ -20,11 +20,11 @@ One-click 1-bit (IQ1_S) compressor for any local LLM on Apple Silicon. FastAPI b
 
 ```bash
 brew install cmake
-./setup.sh                                  # builds llama.cpp with Metal + Python deps
+./setup.sh                                  # builds llama.cpp with Metal + Python deps in .venv
 cd web && npm install                       # frontend deps
 ```
 
-`setup.sh` produces `vendor/llama.cpp/build/bin/llama-quantize` and `llama-cli`. ~10 minutes the first time.
+`setup.sh` produces `llama-quantize`, `llama-imatrix` and `llama-completion` in `vendor/llama.cpp/build/bin/`, and a `.venv` with the Python deps. ~10 minutes the first time. llama.cpp is pinned to the commit in `LLAMA_COMMIT` (`setup.sh`), because upstream changes CLI flags on master; bump it deliberately after re-testing.
 
 ## Run (dev)
 
@@ -109,16 +109,18 @@ on-disk / Ollama models
 | File | Responsibility |
 | --- | --- |
 | `scanner.py` | Walks Ollama manifests + local `.gguf`, peeks GGUF headers for arch/quant. |
-| `compressor.py` | Wraps `llama-quantize`, streams progress, caches output to `compressed/`. |
+| `compressor.py` | Wraps `llama-imatrix` + `llama-quantize`, streams progress, caches output to `compressed/`. |
 | `prompts.py` | Per-family chat templates (Gemma / Llama / Mistral / Phi / Qwen). |
-| `inference.py` | Spawns `llama-cli` with optimal threads, `-ngl 99`, mmap fallback for OOM. |
+| `inference.py` | Spawns `llama-completion` with optimal threads and `-ngl 99`; reports llama.cpp's own decode tokens/sec. |
 | `monitor.py` | psutil RSS/CPU sampler + optional `powermetrics` wattage. |
 | `server.py` | FastAPI: `/api/models`, `/api/compress` (SSE), `/api/inference` (SSE). |
 | `web/` | Vite + React + Tailwind v4 frontend. |
 
 ## Notes
 
-- **Memory fallback** - if a model is bigger than free RAM, `inference.py` warns the UI and runs with `mmap` so the kernel can page weights from disk.
+- **Memory** - weights are always `mmap`ed. If a model is bigger than ~85% of free RAM, `inference.py` warns the UI that the kernel will page weights from disk (slow).
+- **Tokens/sec** - the playground shows llama.cpp's decode rate (generated tokens / eval time), so model load and prompt processing are excluded. Runs killed by the timeout or runaway guard show `—`.
+- **Interrupted compression** - output is written to `*.part` and renamed only on success; closing the tab stops the running `llama-imatrix` / `llama-quantize`.
 - **Wattage** - `powermetrics` requires sudo. Configure passwordless sudo (`sudo visudo`) for live energy numbers; otherwise the dashboard estimates from bandwidth.
 - **Threads** - runner picks `physical_cores - 2` and offloads all layers to Metal with `-ngl 99`.
 
