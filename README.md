@@ -132,7 +132,7 @@ on-disk / Ollama models
 
 - **Memory** - weights are always `mmap`ed. If a model is bigger than ~85% of free RAM, `inference.py` warns the UI that the kernel will page weights from disk (slow).
 - **Tokens/sec** - the playground shows llama.cpp's decode rate (generated tokens / eval time), so model load and prompt processing are excluded. Runs killed by the timeout or runaway guard show `—`.
-- **Interrupted compression** - output is written to `*.part` and renamed only on success; closing the tab stops the running `llama-imatrix` / `llama-quantize`.
+- **Interrupted compression** - output is written to `*.part` and renamed only on success; closing the tab or selecting a different model stops the running `llama-imatrix` / `llama-quantize`.
 - **Wattage** - `powermetrics` requires sudo. Configure passwordless sudo (`sudo visudo`) for live energy numbers; otherwise the dashboard estimates from bandwidth.
 - **Threads** - runner picks `physical_cores - 2`.
 - **GPU offload** - on macOS all layers go to Metal (`-ngl 99`; unified memory). On Linux, llama.cpp's `-ngl auto` puts as many layers as fit in VRAM on the GPU and runs the rest on CPU, so models bigger than a small card's VRAM still load.

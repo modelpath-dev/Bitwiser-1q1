@@ -21,7 +21,7 @@ CALIBRATION_FILE = ROOT / "calibration.txt"
 OUTPUT_DIR = ROOT / "compressed"
 
 # Quant types that already represent <=2-bit; re-quantizing is pointless.
-ALREADY_TINY = {"IQ1_S", "IQ1_M", "IQ2_XXS", "IQ2_XS", "IQ2_S"}
+ALREADY_TINY = {"IQ1_S", "IQ1_M", "IQ2_XXS", "IQ2_XS", "IQ2_S", "TQ1_0", "TQ2_0", "Q1_0"}
 
 # Quant types llama-quantize refuses to produce without an importance matrix.
 NEEDS_IMATRIX = {"IQ1_S", "IQ1_M", "IQ2_XXS", "IQ2_XS", "IQ2_S", "IQ2_M"}

@@ -115,6 +115,10 @@ def _read_gguf_metadata(path: Path) -> dict:
         28: "IQ2_S", 29: "IQ2_M",
         30: "IQ4_XS",
         31: "IQ1_M",
+        32: "BF16",
+        36: "TQ1_0", 37: "TQ2_0",
+        38: "MXFP4_MOE", 39: "NVFP4",
+        40: "Q1_0", 41: "Q2_0",
     }
     if "general.file_type" in out:
         out["quant"] = file_type_map.get(int(out["general.file_type"]), f"FT{out['general.file_type']}")

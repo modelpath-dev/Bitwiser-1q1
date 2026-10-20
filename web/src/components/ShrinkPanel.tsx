@@ -1,8 +1,8 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { compressStream, type CompressPhase, type Model } from "../lib/api";
 import { humanizeBytes } from "../lib/format";
 
-const ALREADY_TINY = new Set(["IQ1_S", "IQ1_M", "IQ2_XXS", "IQ2_XS", "IQ2_S"]);
+const ALREADY_TINY = new Set(["IQ1_S", "IQ1_M", "IQ2_XXS", "IQ2_XS", "IQ2_S", "TQ1_0", "TQ2_0", "Q1_0"]);
 
 export type CompressedArtifact = {
   inputBytes: number;
@@ -30,6 +30,10 @@ export function ShrinkPanel({ model, onCompressed }: Props) {
   const isTiny = ALREADY_TINY.has((model.quant ?? "").toUpperCase());
   const isMultimodal = model.multimodal;
   const blocked = isTiny || isMultimodal;
+
+  // Abort on unmount: the server kills llama-imatrix / llama-quantize when the
+  // stream closes, and a stale stream must never call onCompressed.
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   async function start() {
     setRunning(true);

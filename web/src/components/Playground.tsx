@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { inferenceStream, type Model } from "../lib/api";
 import type { CompressedArtifact } from "./ShrinkPanel";
 
@@ -32,6 +32,14 @@ export function Playground({ model, artifact }: Props) {
   const [right, setRight] = useState<RunState>(INITIAL);
   const leftAbort = useRef<AbortController | null>(null);
   const rightAbort = useRef<AbortController | null>(null);
+
+  useEffect(
+    () => () => {
+      leftAbort.current?.abort();
+      rightAbort.current?.abort();
+    },
+    [],
+  );
 
   async function run(
     side: "left" | "right",
