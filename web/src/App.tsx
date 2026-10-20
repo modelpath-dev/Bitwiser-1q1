@@ -60,10 +60,13 @@ export default function App() {
 
         {selected && (
           <>
-            <ShrinkPanel model={selected} onCompressed={setArtifact} />
+            {/* Keyed by model so switching selection unmounts (and aborts) the
+                previous model's compress/inference streams instead of letting
+                them report into the newly selected model. */}
+            <ShrinkPanel key={`shrink:${selected.name}`} model={selected} onCompressed={setArtifact} />
             <VitalsCards artifact={artifact} />
             {artifact && <DownloadCard model={selected} artifact={artifact} />}
-            <Playground model={selected} artifact={artifact} />
+            <Playground key={`play:${selected.name}`} model={selected} artifact={artifact} />
           </>
         )}
       </main>

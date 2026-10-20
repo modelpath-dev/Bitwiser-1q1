@@ -25,9 +25,9 @@ LLAMA_BIN = ROOT / "vendor" / "llama.cpp" / "build" / "bin"
 # instead"). llama-completion runs the prompt and exits cleanly.
 CLI_BIN = LLAMA_BIN / "llama-completion"
 
-# llama-completion appends this marker to stdout when generation ends. We
-# buffer it out of the user-visible stream.
-EOF_MARKER = "> EOF by user"
+# llama-completion appends this marker to stdout when generation hits an
+# end-of-generation token. We buffer it out of the user-visible stream.
+EOF_MARKER = " [end of text]"
 
 # llama.cpp's perf summary on stderr, e.g.
 #   llama_perf_context_print:        eval time =  812.30 ms /   127 runs   ( ... )
@@ -119,6 +119,10 @@ def build_command(
         "-c", str(ctx),
         "-t", str(threads or optimal_thread_count()),
         *GPU_LAYER_ARGS,
+        # llama-completion turns on conversation mode whenever the GGUF has a
+        # chat template: it wraps our already-templated prompt in a second
+        # template, then waits on stdin for the next turn after replying.
+        "-no-cnv",
         "--no-display-prompt",
         "--simple-io",
     ]
@@ -188,6 +192,7 @@ def run_streaming(
     start = time.perf_counter()
     proc = subprocess.Popen(
         cmd,
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -231,7 +236,7 @@ def run_streaming(
         ps = None
 
     # Tail buffer: hold back the last `tail_len` chars from the stream so we
-    # can drop the trailing "> EOF by user" marker after the process exits.
+    # can drop the trailing " [end of text]" marker after the process exits.
     tail_len = len(EOF_MARKER) + 4  # margin for surrounding newlines/spaces
     tail: list[str] = []
 

@@ -11,9 +11,10 @@ _TEMPLATES: dict[str, dict] = {
         "stop": ["<end_of_turn>"],
     },
     "llama": {
-        # Llama-3 chat
+        # Llama-3 chat. No <|begin_of_text|>: llama-completion adds BOS itself,
+        # and a second one makes it warn "the final prompt starts with 2 BOS tokens".
         "user": (
-            "<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n\n"
+            "<|start_header_id|>user<|end_header_id|>\n\n"
             "{prompt}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
         ),
         "stop": ["<|eot_id|>", "<|end_of_text|>"],

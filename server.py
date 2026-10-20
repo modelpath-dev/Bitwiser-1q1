@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import queue
+import re
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -118,6 +119,9 @@ def compress_model(req: CompressRequest):
     models = _model_index()
     if req.name not in models:
         raise HTTPException(404, f"Unknown model {req.name!r}")
+    # `target` becomes part of the output filename; only allow quant-type names.
+    if not re.fullmatch(r"[A-Za-z0-9_]+", req.target):
+        raise HTTPException(400, f"invalid target {req.target!r}")
     gen = _stream_compress(models[req.name], req.target)
     return StreamingResponse(gen(), media_type="text/event-stream")
 
